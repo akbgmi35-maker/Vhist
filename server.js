@@ -7,7 +7,7 @@ const fs = require('fs');
 const cors = require('cors');
 
 // --- CONFIGURATION ---
-const SUPABASE_URL = process.env.SUPABASE_URL || 'animixsupabase.prithvi.store';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://animixsupabase.prithvi.store';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTc2NzA4MzQ2MCwiZXhwIjo0OTIyNzU3MDYwLCJyb2xlIjoic2VydmljZV9yb2xlIn0.BQOjS3G3ESHcFWQL8Sm6726pdx2XT_WmiRli_dlMXEs'; // Use Service Key to bypass RLS for updates
 const UPLOAD_DIR = './uploads';
 const DOMAIN = process.env.DOMAIN || 'https://myhost.prithvi.store';
