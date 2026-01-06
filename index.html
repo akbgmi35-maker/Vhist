@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamHost - VPS Edition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Supabase Client -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+
+    <!-- Player Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+    <script src="https://cdn.plyr.io/3.8.3/plyr.js"></script>
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.8.3/plyr.css" />
+
+    <style>
+        .plyr { --plyr-color-main: #3b82f6; border-radius: 0.5rem; }
+        body { background-color: #0f172a; color: #f8fafc; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // --- CONFIGURATION ---
+        const SUPABASE_URL = 'https://your-vps-supabase-url.com'; 
+        const SUPABASE_ANON_KEY = 'your-anon-key';
+        
+        // This points to YOUR VPS Node.js Backend URL
+        const API_URL = 'https://api.your-vps-domain.com'; 
+
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const { useState, useEffect, useRef } = React;
+        const { Upload, FileVideo, Play, LogOut, LayoutDashboard, Loader2, Code, CheckCircle2 } = lucide;
+
+        // --- HLS Player Component ---
+        const HlsPlayer = ({ src, poster }) => {
+            const videoRef = useRef(null);
+            const hlsRef = useRef(null);
+
+            useEffect(() => {
+                const video = videoRef.current;
+                if (!video) return;
+
+                let player;
+                const defaultOptions = {
+                    controls: ['play-large', 'play', 'progress', 'current-time', 'mute', 'volume', 'settings', 'fullscreen'],
+                    settings: ['quality', 'speed'],
+                    quality: { default: 720, options: [1080, 720, 480, 240], forced: true, onChange: (e) => updateQuality(e) }
+                };
+
+                const updateQuality = (newQuality) => {
+                    if (hlsRef.current) {
+                        hlsRef.current.levels.forEach((level, index) => {
+                            if (level.height === newQuality) hlsRef.current.currentLevel = index;
+                        });
+                    }
+                };
+
+                if (Hls.isSupported()) {
+                    const hls = new Hls();
+                    hlsRef.current = hls;
+                    hls.loadSource(src);
+                    hls.on(Hls.Events.MANIFEST_PARSED, function (event, data) {
+                        const availableQualities = hls.levels.map((l) => l.height);
+                        defaultOptions.quality = {
+                            default: availableQualities[0],
+                            options: availableQualities,
+                            forced: true,
+                            onChange: (e) => updateQuality(e),
+                        };
+                        player = new Plyr(video, defaultOptions);
+                    });
+                    hls.attachMedia(video);
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = src;
+                    player = new Plyr(video, defaultOptions);
+                }
+
+                return () => {
+                    if (hlsRef.current) hlsRef.current.destroy();
+                    if (player) player.destroy();
+                };
+            }, [src]);
+
+            return (
+                <div className="rounded-xl overflow-hidden shadow-2xl border border-gray-700">
+                    <video ref={videoRef} className="plyr__video-embed" poster={poster} controls crossOrigin="true" playsInline />
+                </div>
+            );
+        };
+
+        // --- Dashboard ---
+        const Dashboard = ({ session }) => {
+            const [videos, setVideos] = useState([]);
+            const [isUploading, setIsUploading] = useState(false);
+
+            // Fetch Videos from Supabase
+            const fetchVideos = async () => {
+                const { data, error } = await supabase
+                    .from('streamhost_videos')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+                
+                if (data) setVideos(data);
+            };
+
+            useEffect(() => {
+                fetchVideos();
+                // Polling for status updates (simple implementation)
+                const interval = setInterval(fetchVideos, 5000);
+                return () => clearInterval(interval);
+            }, []);
+
+            const handleFileUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                setIsUploading(true);
+                const formData = new FormData();
+                formData.append('video', file);
+                formData.append('userId', session.user.id); // Send UserID to backend
+
+                try {
+                    // Upload to VPS Backend
+                    const response = await fetch(`${API_URL}/api/upload`, {
+                        method: 'POST',
+                        headers: {
+                            // Pass Supabase Token for backend verification
+                            'Authorization': `Bearer ${session.access_token}`
+                        },
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        fetchVideos(); // Refresh list immediately
+                    } else {
+                        alert("Upload failed");
+                    }
+                } catch (error) {
+                    console.error("Upload error:", error);
+                    alert("Error connecting to server");
+                } finally {
+                    setIsUploading(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-900 p-8">
+                    <div className="max-w-6xl mx-auto">
+                        <header className="flex justify-between items-center mb-10 border-b border-slate-800 pb-6">
+                            <h1 className="text-3xl font-bold text-white flex items-center gap-2">
+                                <FileVideo className="text-blue-500" /> StreamHost VPS
+                            </h1>
+                            <button onClick={() => supabase.auth.signOut()} className="text-slate-400 hover:text-white flex gap-2">
+                                <LogOut size={18} /> Sign Out
+                            </button>
+                        </header>
+
+                        {/* Upload Area */}
+                        <div className="bg-slate-800 rounded-xl p-8 mb-10 border border-slate-700 text-center">
+                            {isUploading ? (
+                                <div className="flex flex-col items-center gap-4">
+                                    <Loader2 className="animate-spin text-blue-500 h-10 w-10" />
+                                    <p className="text-blue-400">Uploading to VPS & Starting Transcode...</p>
+                                </div>
+                            ) : (
+                                <label className="cursor-pointer bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-8 rounded-lg inline-flex items-center gap-2 transition-all">
+                                    <Upload size={20} /> Upload New Video
+                                    <input type="file" accept="video/*" className="hidden" onChange={handleFileUpload} />
+                                </label>
+                            )}
+                        </div>
+
+                        {/* Video Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {videos.map(video => (
+                                <div key={video.id} className="bg-slate-800 rounded-lg overflow-hidden border border-slate-700 group">
+                                    <div className="aspect-video bg-black relative">
+                                        {video.status === 'ready' ? (
+                                            <div className="w-full h-full relative">
+                                                 <img src={video.thumbnail_url || 'https://via.placeholder.com/640x360?text=Video'} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
+                                                 <button onClick={() => window.open(`/embed/${video.slug}`, '_blank')} className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/50">
+                                                    <Play className="text-white h-12 w-12" fill="white" />
+                                                 </button>
+                                            </div>
+                                        ) : (
+                                            <div className="w-full h-full flex flex-col items-center justify-center text-slate-500">
+                                                <Loader2 className="animate-spin mb-2" />
+                                                <span className="text-xs uppercase">{video.status}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="p-4">
+                                        <h3 className="font-bold text-white truncate">{video.title}</h3>
+                                        <div className="flex justify-between items-center mt-2">
+                                            <span className="text-xs font-mono bg-slate-700 px-2 py-1 rounded text-slate-300">
+                                                {video.slug}
+                                            </span>
+                                            <button 
+                                                onClick={() => navigator.clipboard.writeText(`<iframe src="${API_URL}/embed/${video.slug}" width="100%" height="100%"></iframe>`)}
+                                                className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                                            >
+                                                <Code size={12} /> Copy Embed
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Authentication ---
+        const Auth = () => {
+            const [loading, setLoading] = useState(false);
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [isSignUp, setIsSignUp] = useState(false);
+
+            const handleAuth = async (e) => {
+                e.preventDefault();
+                setLoading(true);
+                try {
+                    const { error } = isSignUp 
+                        ? await supabase.auth.signUp({ email, password })
+                        : await supabase.auth.signInWithPassword({ email, password });
+                    if (error) throw error;
+                } catch (error) {
+                    alert(error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+                    <form onSubmit={handleAuth} className="bg-slate-900 p-8 rounded-2xl shadow-xl w-full max-w-md border border-slate-800">
+                        <h2 className="text-2xl font-bold text-white mb-6 text-center">
+                            {isSignUp ? 'Register for VPS Host' : 'Login to VPS Host'}
+                        </h2>
+                        <input className="w-full mb-4 bg-slate-950 border border-slate-700 rounded p-3 text-white" 
+                            type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
+                        <input className="w-full mb-6 bg-slate-950 border border-slate-700 rounded p-3 text-white" 
+                            type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
+                        <button disabled={loading} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded transition-colors">
+                            {loading ? 'Processing...' : (isSignUp ? 'Sign Up' : 'Sign In')}
+                        </button>
+                        <p className="mt-4 text-center text-slate-400 text-sm cursor-pointer hover:text-white" onClick={() => setIsSignUp(!isSignUp)}>
+                            {isSignUp ? 'Already have an account? Login' : 'Need an account? Register'}
+                        </p>
+                    </form>
+                </div>
+            );
+        };
+
+        // --- Main App ---
+        const App = () => {
+            const [session, setSession] = useState(null);
+
+            useEffect(() => {
+                supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
+                const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setSession(session));
+                return () => subscription.unsubscribe();
+            }, []);
+
+            return session ? <Dashboard session={session} /> : <Auth />;
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
+
+
